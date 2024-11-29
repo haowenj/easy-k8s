@@ -21,6 +21,7 @@ func (s *ApiServer) Engine() *gin.Engine {
 
 	node := NodeLogic{NodeInformer: s.nodeInformer}
 	engine.GET("/nodeList", node.GetNodeList)
+	engine.GET("/nodeTag/:node", node.NodeTag)
 	return engine
 }
 

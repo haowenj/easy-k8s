@@ -13,6 +13,7 @@ import (
 const (
 	NodeLabelRole       = "kubernetes.io/role"
 	LabelNodeRolePrefix = "node-role.kubernetes.io/"
+	LabelCustomPrefix   = "osgalaxy.io"
 )
 
 type NodeLogic struct {
@@ -30,6 +31,10 @@ type NodeListData struct {
 	OsImage          string `json:"osImage"`
 	KernelVersion    string `json:"kernelVersion"`
 	ContainerRuntime string `json:"containerRuntime"`
+}
+
+type NodeTag struct {
+	Tag map[string]string `json:"tag"`
 }
 
 func (n *NodeLogic) GetNodeList(ctx *gin.Context) {
@@ -75,7 +80,39 @@ func (n *NodeLogic) GetNodeList(ctx *gin.Context) {
 		data.Roles = strings.Join(roles, ",")
 		rows = append(rows, data)
 	}
-	ctx.JSON(http.StatusOK, rows)
+	ctx.JSON(http.StatusOK, gin.H{"data": rows})
+}
+
+func (n *NodeLogic) NodeTag(ctx *gin.Context) {
+	name := ctx.Param("node")
+	tagType := ctx.Query("tagType")
+	if len(name) == 0 || len(tagType) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"msg": "request parameter error"})
+		return
+	}
+
+	obj, err := n.NodeInformer.GetIndexer().ByIndex("nodeNameIdx", name)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
+		return
+	}
+	if len(obj) == 0 {
+		ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
+		return
+	}
+
+	node := obj[0].(*v1.Node)
+	labels := map[string]string{}
+	for k, v := range node.GetLabels() {
+		if strings.HasPrefix(k, LabelCustomPrefix) && tagType == "custom" {
+			labels[k] = v
+		}
+		if !strings.HasPrefix(k, LabelCustomPrefix) && tagType == "sys" {
+			labels[k] = v
+		}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": &NodeTag{Tag: labels}})
 }
 
 func calculateAge(creationTime time.Time) string {

@@ -44,7 +44,13 @@ func main() {
 		return
 	}
 
-	apiSvc := &api.ApiServer{}
+	dynamicClient, err := client.NewDynamicClient(k8sConfig)
+	if err != nil {
+		logger.Error(err, "Create dynamicClient failed")
+		return
+	}
+
+	apiSvc := &api.ApiServer{DynamicClient: dynamicClient}
 	apiSvc.RunInformerFactory(factory, ctx)
 
 	err = http.ListenAndServe(":9898", apiSvc.Engine())

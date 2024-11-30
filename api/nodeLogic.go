@@ -1,19 +1,28 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	"easy-k8s/pkg/comm"
 	"github.com/gin-gonic/gin"
-	v1 "k8s.io/api/core/v1"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/cache"
+
+	"easy-k8s/pkg/comm"
 )
 
+var nodeNotFoundErr = errors.New("node not found")
+
 type NodeLogic struct {
-	NodeInformer cache.SharedIndexInformer
+	DynamicClient dynamic.Interface
+	NodeInformer  cache.SharedIndexInformer
 }
 
 type NodeListData struct {
@@ -29,8 +38,13 @@ type NodeListData struct {
 	ContainerRuntime string `json:"containerRuntime"`
 }
 
-type NodeTag struct {
-	Tag map[string]string `json:"tag"`
+type NodeLabelPatchReq struct {
+	Labels []*struct {
+		Op     string `json:"op"`
+		Encode bool   `json:"encode"`
+		Key    string `json:"key"`
+		Value  string `json:"value"`
+	} `json:"labels"`
 }
 
 func (n *NodeLogic) GetNodeList(ctx *gin.Context) {
@@ -79,7 +93,7 @@ func (n *NodeLogic) GetNodeList(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"data": rows})
 }
 
-func (n *NodeLogic) NodeTag(ctx *gin.Context) {
+func (n *NodeLogic) NodeLabels(ctx *gin.Context) {
 	name := ctx.Param("node")
 	tagType := ctx.Query("tagType")
 	if len(name) == 0 || len(tagType) == 0 {
@@ -87,31 +101,90 @@ func (n *NodeLogic) NodeTag(ctx *gin.Context) {
 		return
 	}
 
-	obj, err := n.NodeInformer.GetIndexer().ByIndex("nodeNameIdx", name)
+	node, err := n.getNodeByName(name)
 	if err != nil {
+		if errors.Is(err, nodeNotFoundErr) {
+			ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
+			return
+		}
 		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
 		return
 	}
-	if len(obj) == 0 {
-		ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
-		return
-	}
-
-	node := obj[0].(*v1.Node)
-	labels := map[string]string{}
+	var labels []string
 	for k, v := range node.GetLabels() {
 		if _, ok := comm.DecodeLables[k]; ok {
 			v, _ = comm.Base64UrlDecode(v)
 		}
 		if strings.HasPrefix(k, comm.LabelCustomPrefix) && tagType == "custom" {
-			labels[k] = v
+			labels = append(labels, fmt.Sprintf("%s=%s", k, v))
 		}
 		if !strings.HasPrefix(k, comm.LabelCustomPrefix) && tagType == "sys" {
-			labels[k] = v
+			labels = append(labels, fmt.Sprintf("%s=%s", k, v))
 		}
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"data": &NodeTag{Tag: labels}})
+	ctx.JSON(http.StatusOK, gin.H{"data": labels})
+}
+
+func (n *NodeLogic) NodeLabelPatch(ctx *gin.Context) {
+	name := ctx.Param("node")
+	if len(name) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"msg": "request parameter error"})
+		return
+	}
+
+	var newLabels *NodeLabelPatchReq
+	if err := ctx.BindJSON(&newLabels); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"msg": err.Error()})
+		return
+	}
+
+	node, err := n.getNodeByName(name)
+	if err != nil {
+		if errors.Is(err, nodeNotFoundErr) {
+			ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
+		return
+	}
+
+	labels := node.GetLabels()
+	for _, l := range newLabels.Labels {
+		if l.Op == "remove" {
+			delete(labels, l.Key)
+			continue
+		}
+		if l.Encode {
+			l.Value = comm.Base64UrlEncode(l.Value)
+		}
+		labels[l.Key] = l.Value
+	}
+
+	patchData := comm.PatchOperation{Op: "replace", Path: "/metadata/labels", Value: labels}
+
+	playLoadBytes, err := json.Marshal(patchData)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
+		return
+	}
+
+	if _, err = n.DynamicClient.Resource(comm.NodeGVR).Patch(ctx, name, types.MergePatchType, playLoadBytes, metav1.PatchOptions{}); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"data": "ok"})
+}
+
+func (n *NodeLogic) getNodeByName(name string) (*v1.Node, error) {
+	obj, err := n.NodeInformer.GetIndexer().ByIndex("nodeNameIdx", name)
+	if err != nil {
+		return nil, err
+	}
+	if len(obj) == 0 {
+		return nil, nodeNotFoundErr
+	}
+	return obj[0].(*v1.Node), nil
 }
 
 func calculateAge(creationTime time.Time) string {

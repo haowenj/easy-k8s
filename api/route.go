@@ -4,13 +4,15 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/cache"
 
 	"easy-k8s/pkg/k8s/informerfactory"
 )
 
 type ApiServer struct {
-	nodeInformer cache.SharedIndexInformer
+	DynamicClient dynamic.Interface
+	nodeInformer  cache.SharedIndexInformer
 }
 
 func (s *ApiServer) Engine() *gin.Engine {
@@ -19,9 +21,10 @@ func (s *ApiServer) Engine() *gin.Engine {
 		c.JSON(200, gin.H{"message": "has been successfully run"})
 	})
 
-	node := NodeLogic{NodeInformer: s.nodeInformer}
+	node := NodeLogic{NodeInformer: s.nodeInformer, DynamicClient: s.DynamicClient}
 	engine.GET("/nodeList", node.GetNodeList)
-	engine.GET("/nodeTag/:node", node.NodeTag)
+	engine.GET("/nodeLabels/:node", node.NodeLabels)
+	engine.POST("/nodeLabels/:node", node.NodeLabelPatch)
 	return engine
 }
 

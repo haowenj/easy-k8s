@@ -2,18 +2,14 @@ package api
 
 import (
 	"fmt"
-	"github.com/gin-gonic/gin"
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/cache"
 	"net/http"
 	"strings"
 	"time"
-)
 
-const (
-	NodeLabelRole       = "kubernetes.io/role"
-	LabelNodeRolePrefix = "node-role.kubernetes.io/"
-	LabelCustomPrefix   = "osgalaxy.io"
+	"easy-k8s/pkg/comm"
+	"github.com/gin-gonic/gin"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/cache"
 )
 
 type NodeLogic struct {
@@ -68,12 +64,12 @@ func (n *NodeLogic) GetNodeList(ctx *gin.Context) {
 		roles := []string{}
 		for k, v := range node.Labels {
 			switch {
-			case strings.HasPrefix(k, LabelNodeRolePrefix):
-				if role := strings.TrimPrefix(k, LabelNodeRolePrefix); len(role) > 0 {
+			case strings.HasPrefix(k, comm.LabelNodeRolePrefix):
+				if role := strings.TrimPrefix(k, comm.LabelNodeRolePrefix); len(role) > 0 {
 					roles = append(roles, role)
 				}
 
-			case k == NodeLabelRole && v != "":
+			case k == comm.NodeLabelRole && v != "":
 				roles = append(roles, v)
 			}
 		}
@@ -104,10 +100,13 @@ func (n *NodeLogic) NodeTag(ctx *gin.Context) {
 	node := obj[0].(*v1.Node)
 	labels := map[string]string{}
 	for k, v := range node.GetLabels() {
-		if strings.HasPrefix(k, LabelCustomPrefix) && tagType == "custom" {
+		if _, ok := comm.DecodeLables[k]; ok {
+			v, _ = comm.Base64UrlDecode(v)
+		}
+		if strings.HasPrefix(k, comm.LabelCustomPrefix) && tagType == "custom" {
 			labels[k] = v
 		}
-		if !strings.HasPrefix(k, LabelCustomPrefix) && tagType == "sys" {
+		if !strings.HasPrefix(k, comm.LabelCustomPrefix) && tagType == "sys" {
 			labels[k] = v
 		}
 	}

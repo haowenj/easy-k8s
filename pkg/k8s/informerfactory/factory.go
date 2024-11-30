@@ -85,6 +85,21 @@ func (f *InformerFactory) Node() cache.SharedIndexInformer {
 	})
 }
 
+func (f *InformerFactory) Pod() cache.SharedIndexInformer {
+	return f.getInformer("podInformer", func() cache.SharedIndexInformer {
+		lw := f.newListWatchFromClient(f.clientSet.CoreV1().RESTClient(), "pods", k8sv1.NamespaceAll, fields.Everything(), labels.Everything())
+		return cache.NewSharedIndexInformer(lw, &k8sv1.Pod{}, f.defaultResync, cache.Indexers{
+			"nodeNameIdx": func(obj any) ([]string, error) {
+				pod, ok := obj.(*k8sv1.Pod)
+				if !ok {
+					return nil, fmt.Errorf("unexpected type %T", obj)
+				}
+				return []string{pod.Spec.NodeName}, nil
+			},
+		})
+	})
+}
+
 func (f *InformerFactory) getInformer(key string, newFunc newSharedInformer) cache.SharedIndexInformer {
 	f.lock.Lock()
 	defer f.lock.Unlock()

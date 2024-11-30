@@ -23,6 +23,7 @@ var nodeNotFoundErr = errors.New("node not found")
 type NodeLogic struct {
 	DynamicClient dynamic.Interface
 	NodeInformer  cache.SharedIndexInformer
+	PodInformer   cache.SharedIndexInformer
 }
 
 type NodeListData struct {
@@ -185,6 +186,77 @@ func (n *NodeLogic) getNodeByName(name string) (*v1.Node, error) {
 		return nil, nodeNotFoundErr
 	}
 	return obj[0].(*v1.Node), nil
+}
+
+func (n *NodeLogic) NodeResource(ctx *gin.Context) {
+	name := ctx.Param("node")
+	if len(name) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"msg": "request parameter error"})
+		return
+	}
+	node, err := n.getNodeByName(name)
+	if err != nil {
+		if errors.Is(err, nodeNotFoundErr) {
+			ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
+		return
+	}
+
+	total := make(map[string]string)
+	var product string
+	for resourceName, quantity := range node.Status.Allocatable {
+		if resourceName.String() == "cpu" {
+			total["cpu"] = fmt.Sprintf("%dc", quantity.Value())
+		}
+		if resourceName.String() == "memory" {
+			total["memory"] = fmt.Sprintf("%dg", quantity.Value()/(1024*1024*1024))
+		}
+		if resourceName.String() == "nvidia.com/gpu" {
+			for key := range node.GetLabels() {
+				if strings.HasPrefix(key, "osgalaxy.io-gpu-nvidia.com") {
+					product = strings.Split(key, "/")[1]
+				}
+			}
+			total[product] = fmt.Sprintf("%d", quantity.Value())
+		}
+	}
+
+	used := make(map[string]string)
+	objs, err := n.PodInformer.GetIndexer().ByIndex("nodeNameIdx", node.GetName())
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
+		return
+	}
+
+	var cpu, mem, gpu int64
+	for _, obj := range objs {
+		pod := obj.(*v1.Pod)
+		for _, container := range pod.Spec.Containers {
+			if _, ok := container.Resources.Requests["nvidia.com/gpu"]; ok {
+				req := container.Resources.Requests["nvidia.com/gpu"]
+				gpu += req.Value()
+			}
+			if _, ok := container.Resources.Requests["cpu"]; ok {
+				req := container.Resources.Requests["cpu"]
+				cpu += req.Value()
+			}
+			if _, ok := container.Resources.Requests["memory"]; ok {
+				req := container.Resources.Requests["memory"]
+				mem += req.Value()
+			}
+		}
+	}
+	used["cpu"] = fmt.Sprintf("%dc", cpu)
+	used["memory"] = fmt.Sprintf("%dg", mem/(1024*1024*1024))
+	if gpu > 0 {
+		used[product] = fmt.Sprintf("%d", gpu)
+	}
+	ctx.JSON(http.StatusOK, gin.H{"data": map[string]map[string]string{
+		"total": total,
+		"used":  used,
+	}})
 }
 
 func calculateAge(creationTime time.Time) string {

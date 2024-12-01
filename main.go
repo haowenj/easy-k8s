@@ -50,7 +50,7 @@ func main() {
 		return
 	}
 
-	apiSvc := &api.ApiServer{DynamicClient: dynamicClient}
+	apiSvc := &api.ApiServer{DynamicClient: dynamicClient, Log: logger}
 	apiSvc.RunInformerFactory(factory, ctx)
 
 	err = http.ListenAndServe(":9898", apiSvc.Engine())

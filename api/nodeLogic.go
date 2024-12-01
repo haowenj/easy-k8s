@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-logr/logr"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -21,6 +22,7 @@ import (
 var nodeNotFoundErr = errors.New("node not found")
 
 type NodeLogic struct {
+	Log           logr.Logger
 	DynamicClient dynamic.Interface
 	NodeInformer  cache.SharedIndexInformer
 	PodInformer   cache.SharedIndexInformer
@@ -75,6 +77,7 @@ func (n *NodeLogic) GetDisplayFileds(ctx *gin.Context) {
 func (n *NodeLogic) SetDisplayFileds(ctx *gin.Context) {
 	var fields []string
 	if err := ctx.BindJSON(&fields); err != nil {
+		n.Log.Error(err, "bind json err")
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
 		return
 	}
@@ -90,6 +93,7 @@ func (n *NodeLogic) GetNodeList(ctx *gin.Context) {
 
 	var req NodeListReq
 	if err := ctx.BindQuery(&req); err != nil {
+		n.Log.Error(err, "bind query err")
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -195,6 +199,7 @@ func (n *NodeLogic) NodeLabels(ctx *gin.Context) {
 			ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
 			return
 		}
+		n.Log.Error(err, "get node err")
 		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
 		return
 	}
@@ -230,6 +235,7 @@ func (n *NodeLogic) NodeLabelPatch(ctx *gin.Context) {
 	node, err := n.getNodeByName(name)
 	if err != nil {
 		if errors.Is(err, nodeNotFoundErr) {
+			n.Log.Error(err, "get node err")
 			ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
 			return
 		}
@@ -249,15 +255,17 @@ func (n *NodeLogic) NodeLabelPatch(ctx *gin.Context) {
 		labels[l.Key] = l.Value
 	}
 
-	patchData := comm.PatchOperation{Op: "replace", Path: "/metadata/labels", Value: labels}
+	patchData := []comm.PatchOperation{{Op: "replace", Path: "/metadata/labels", Value: labels}}
 
 	playLoadBytes, err := json.Marshal(patchData)
 	if err != nil {
+		n.Log.Error(err, "json marshal err")
 		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
 		return
 	}
 
-	if _, err = n.DynamicClient.Resource(comm.NodeGVR).Patch(ctx, name, types.MergePatchType, playLoadBytes, metav1.PatchOptions{}); err != nil {
+	if _, err = n.DynamicClient.Resource(comm.NodeGVR).Patch(ctx, name, types.JSONPatchType, playLoadBytes, metav1.PatchOptions{}); err != nil {
+		n.Log.Error(err, "patch err")
 		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
 		return
 	}

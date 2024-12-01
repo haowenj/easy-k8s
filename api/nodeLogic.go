@@ -26,17 +26,37 @@ type NodeLogic struct {
 	PodInformer   cache.SharedIndexInformer
 }
 
+var displayFileds = map[string]struct{}{
+	"status":           {},
+	"roles":            {},
+	"age":              {},
+	"version":          {},
+	"internalIP":       {},
+	"externalIP":       {},
+	"osImage":          {},
+	"kernelVersion":    {},
+	"containerRuntime": {},
+	"gpuProduct":       {},
+}
+
 type NodeListData struct {
 	Name             string `json:"name"`
-	Status           string `json:"status"`
-	Roles            string `json:"roles"`
-	Age              string `json:"age"`
-	Version          string `json:"version"`
-	InternalIP       string `json:"internalIP"`
-	ExternalIP       string `json:"externalIP"`
-	OsImage          string `json:"osImage"`
-	KernelVersion    string `json:"kernelVersion"`
-	ContainerRuntime string `json:"containerRuntime"`
+	Status           string `json:"status,omitempty"`
+	Roles            string `json:"roles,omitempty"`
+	Age              string `json:"age,omitempty"`
+	Version          string `json:"version,omitempty"`
+	InternalIP       string `json:"internalIP,omitempty"`
+	ExternalIP       string `json:"externalIP,omitempty"`
+	OsImage          string `json:"osImage,omitempty"`
+	KernelVersion    string `json:"kernelVersion,omitempty"`
+	ContainerRuntime string `json:"containerRuntime,omitempty"`
+	GpuProduct       string `json:"gpuProduct,omitempty"`
+}
+
+type NodeListReq struct {
+	NodeRole string `json:"nodeRole" form:"nodeRole"`
+	HasGpu   bool   `json:"hasGpu" form:"hasGpu"`
+	Name     string `json:"name" form:"name"`
 }
 
 type NodeLabelPatchReq struct {
@@ -48,47 +68,114 @@ type NodeLabelPatchReq struct {
 	} `json:"labels"`
 }
 
+func (n *NodeLogic) GetDisplayFileds(ctx *gin.Context) {
+	ctx.JSON(http.StatusOK, gin.H{"data": displayFileds})
+}
+
+func (n *NodeLogic) SetDisplayFileds(ctx *gin.Context) {
+	var fields []string
+	if err := ctx.BindJSON(&fields); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+	displayFileds = map[string]struct{}{}
+	for _, field := range fields {
+		displayFileds[field] = struct{}{}
+	}
+	ctx.JSON(http.StatusOK, gin.H{"data": displayFileds})
+}
+
 func (n *NodeLogic) GetNodeList(ctx *gin.Context) {
 	var rows []*NodeListData
 
+	var req NodeListReq
+	if err := ctx.BindQuery(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	for _, obj := range n.NodeInformer.GetStore().List() {
 		node := obj.(*v1.Node)
+
+		var isGpuNode bool
+		gpuProduct := "-"
+		for key := range node.Labels {
+			if strings.HasPrefix(key, "osgalaxy.io-gpu-nvidia.com") {
+				isGpuNode = true
+				gpuProduct = strings.Split(key, "/")[1]
+			}
+		}
+
+		if len(req.NodeRole) != 0 {
+			if role, ok := node.Labels["osgalaxy.io/role"]; !ok || role != req.NodeRole {
+				continue
+			}
+		}
+		if len(req.Name) != 0 {
+			if !strings.Contains(node.Name, req.Name) {
+				continue
+			}
+		}
+		if req.HasGpu {
+			if !isGpuNode {
+				continue
+			}
+		}
 		data := &NodeListData{}
 		data.Name = node.Name
-		data.Age = calculateAge(node.CreationTimestamp.Time)
-		data.Version = node.Status.NodeInfo.KubeletVersion
-		data.KernelVersion = node.Status.NodeInfo.KubeletVersion
-		data.OsImage = node.Status.NodeInfo.OSImage
-		data.ContainerRuntime = node.Status.NodeInfo.ContainerRuntimeVersion
-		for _, address := range node.Status.Addresses {
-			if address.Type == v1.NodeInternalIP {
-				data.InternalIP = address.Address
-			}
+		if _, ok := displayFileds["age"]; ok {
+			data.Age = calculateAge(node.CreationTimestamp.Time)
 		}
-		for _, condition := range node.Status.Conditions {
-			if condition.Type == v1.NodeReady {
-				if condition.Status == v1.ConditionTrue {
-					data.Status = "Ready"
-				} else if condition.Status == v1.ConditionUnknown {
-					data.Status = "NotReady"
-				} else {
-					data.Status = "Unknown"
+		if _, ok := displayFileds["gpuProduct"]; ok {
+			data.GpuProduct = gpuProduct
+		}
+		if _, ok := displayFileds["version"]; ok {
+			data.Version = node.Status.NodeInfo.KubeletVersion
+		}
+		if _, ok := displayFileds["kernelVersion"]; ok {
+			data.KernelVersion = node.Status.NodeInfo.KubeletVersion
+		}
+		if _, ok := displayFileds["osImage"]; ok {
+			data.OsImage = node.Status.NodeInfo.OSImage
+		}
+		if _, ok := displayFileds["containerRuntime"]; ok {
+			data.ContainerRuntime = node.Status.NodeInfo.ContainerRuntimeVersion
+		}
+		if _, ok := displayFileds["internalIP"]; ok {
+			for _, address := range node.Status.Addresses {
+				if address.Type == v1.NodeInternalIP {
+					data.InternalIP = address.Address
 				}
 			}
 		}
-		roles := []string{}
-		for k, v := range node.Labels {
-			switch {
-			case strings.HasPrefix(k, comm.LabelNodeRolePrefix):
-				if role := strings.TrimPrefix(k, comm.LabelNodeRolePrefix); len(role) > 0 {
-					roles = append(roles, role)
+		if _, ok := displayFileds["status"]; ok {
+			for _, condition := range node.Status.Conditions {
+				if condition.Type == v1.NodeReady {
+					if condition.Status == v1.ConditionTrue {
+						data.Status = "Ready"
+					} else if condition.Status == v1.ConditionUnknown {
+						data.Status = "NotReady"
+					} else {
+						data.Status = "Unknown"
+					}
 				}
+			}
+		}
+		if _, ok := displayFileds["roles"]; ok {
+			roles := []string{}
+			for k, v := range node.Labels {
+				switch {
+				case strings.HasPrefix(k, comm.LabelNodeRolePrefix):
+					if role := strings.TrimPrefix(k, comm.LabelNodeRolePrefix); len(role) > 0 {
+						roles = append(roles, role)
+					}
 
-			case k == comm.NodeLabelRole && v != "":
-				roles = append(roles, v)
+				case k == comm.NodeLabelRole && v != "":
+					roles = append(roles, v)
+				}
 			}
+			data.Roles = strings.Join(roles, ",")
 		}
-		data.Roles = strings.Join(roles, ",")
 		rows = append(rows, data)
 	}
 	ctx.JSON(http.StatusOK, gin.H{"data": rows})
@@ -177,17 +264,6 @@ func (n *NodeLogic) NodeLabelPatch(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"data": "ok"})
 }
 
-func (n *NodeLogic) getNodeByName(name string) (*v1.Node, error) {
-	obj, err := n.NodeInformer.GetIndexer().ByIndex("nodeNameIdx", name)
-	if err != nil {
-		return nil, err
-	}
-	if len(obj) == 0 {
-		return nil, nodeNotFoundErr
-	}
-	return obj[0].(*v1.Node), nil
-}
-
 func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 	name := ctx.Param("node")
 	if len(name) == 0 {
@@ -257,6 +333,17 @@ func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 		"total": total,
 		"used":  used,
 	}})
+}
+
+func (n *NodeLogic) getNodeByName(name string) (*v1.Node, error) {
+	obj, err := n.NodeInformer.GetIndexer().ByIndex("nodeNameIdx", name)
+	if err != nil {
+		return nil, err
+	}
+	if len(obj) == 0 {
+		return nil, nodeNotFoundErr
+	}
+	return obj[0].(*v1.Node), nil
 }
 
 func calculateAge(creationTime time.Time) string {

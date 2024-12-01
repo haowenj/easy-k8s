@@ -23,6 +23,8 @@ func (s *ApiServer) Engine() *gin.Engine {
 	})
 
 	node := NodeLogic{NodeInformer: s.nodeInformer, PodInformer: s.podInformer, DynamicClient: s.DynamicClient}
+	engine.GET("/getConf", node.GetDisplayFileds)
+	engine.POST("/setConf", node.SetDisplayFileds)
 	engine.GET("/nodeList", node.GetNodeList)
 	engine.GET("/nodeLabels/:node", node.NodeLabels)
 	engine.POST("/nodeLabels/:node", node.NodeLabelPatch)

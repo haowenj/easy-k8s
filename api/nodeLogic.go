@@ -295,7 +295,7 @@ func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 			total["cpu"] = fmt.Sprintf("%dc", quantity.Value())
 		}
 		if resourceName.String() == "memory" {
-			total["memory"] = fmt.Sprintf("%dg", quantity.Value()/(1024*1024*1024))
+			total["memory"] = fmt.Sprintf("%dmi", quantity.Value()/(1024*1024))
 		}
 		if resourceName.String() == "nvidia.com/gpu" {
 			for key := range node.GetLabels() {
@@ -333,7 +333,7 @@ func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 		}
 	}
 	used["cpu"] = fmt.Sprintf("%dm", cpu)
-	used["memory"] = fmt.Sprintf("%dg", mem/(1024*1024*1024))
+	used["memory"] = fmt.Sprintf("%dmi", mem/(1024*1024))
 	if gpu > 0 {
 		used[product] = fmt.Sprintf("%d", gpu)
 	}

@@ -316,7 +316,7 @@ func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 			}
 			if _, ok := container.Resources.Requests["cpu"]; ok {
 				req := container.Resources.Requests["cpu"]
-				cpu += req.Value()
+				cpu += req.MilliValue()
 			}
 			if _, ok := container.Resources.Requests["memory"]; ok {
 				req := container.Resources.Requests["memory"]
@@ -324,7 +324,7 @@ func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 			}
 		}
 	}
-	used["cpu"] = fmt.Sprintf("%dc", cpu)
+	used["cpu"] = fmt.Sprintf("%dm", cpu)
 	used["memory"] = fmt.Sprintf("%dg", mem/(1024*1024*1024))
 	if gpu > 0 {
 		used[product] = fmt.Sprintf("%d", gpu)

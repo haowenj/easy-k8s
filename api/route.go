@@ -24,13 +24,14 @@ func (s *ApiServer) Engine() *gin.Engine {
 		c.JSON(200, gin.H{"message": "has been successfully run"})
 	})
 
-	node := &NodeLogic{NodeInformer: s.nodeInformer, PodInformer: s.podInformer, DynamicClient: s.DynamicClient, Log: s.Log.WithName("node-logic")}
+	node := NewNodeLogic(s.Log, s.DynamicClient, s.nodeInformer, s.podInformer)
 	engine.GET("/getConf", node.GetDisplayFileds)
 	engine.POST("/setConf", node.SetDisplayFileds)
 	engine.GET("/nodeList", node.GetNodeList)
 	engine.GET("/nodeLabels/:node", node.NodeLabels)
 	engine.POST("/nodeLabels/:node", node.NodeLabelPatch)
 	engine.GET("/nodeResource/:node", node.NodeResource)
+	engine.GET("/nodePodList/:node", node.NodePodList)
 	return engine
 }
 

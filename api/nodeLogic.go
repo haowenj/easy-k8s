@@ -70,6 +70,24 @@ type NodeLabelPatchReq struct {
 	} `json:"labels"`
 }
 
+type NodePodData struct {
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
+	Status      string `json:"status"`
+	Age         string `json:"age"`
+	UseGpu      bool   `json:"useGpu"`
+	UseGpuCount int    `json:"useGpuCount"`
+}
+
+func NewNodeLogic(log logr.Logger, dynamicClient dynamic.Interface, nodeInformer, podInformer cache.SharedIndexInformer) *NodeLogic {
+	return &NodeLogic{
+		Log:           log,
+		DynamicClient: dynamicClient,
+		NodeInformer:  nodeInformer,
+		PodInformer:   podInformer,
+	}
+}
+
 func (n *NodeLogic) GetDisplayFileds(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"data": displayFileds})
 }
@@ -341,6 +359,60 @@ func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 		"total": total,
 		"used":  used,
 	}})
+}
+
+func (n *NodeLogic) NodePodList(ctx *gin.Context) {
+	name := ctx.Param("node")
+	if len(name) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"msg": "request parameter error"})
+		return
+	}
+	node, err := n.getNodeByName(name)
+	if err != nil {
+		if errors.Is(err, nodeNotFoundErr) {
+			ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
+		return
+	}
+
+	objs, err := n.PodInformer.GetIndexer().ByIndex("nodeNameIdx", node.GetName())
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
+		return
+	}
+	var data []*NodePodData
+	for _, obj := range objs {
+		pod := obj.(*v1.Pod)
+		row := &NodePodData{
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+			Age:       calculateAge(pod.CreationTimestamp.Time),
+		}
+
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == v1.PodReady {
+				if condition.Status == v1.ConditionTrue {
+					row.Status = "Ready"
+				} else {
+					row.Status = "NotReady"
+				}
+				break
+			}
+
+		}
+		for _, container := range pod.Spec.Containers {
+			if _, ok := container.Resources.Requests["nvidia.com/gpu"]; ok {
+				row.UseGpu = true
+				req := container.Resources.Requests["nvidia.com/gpu"]
+				row.UseGpuCount += int(req.Value())
+			}
+		}
+
+		data = append(data, row)
+	}
+	ctx.JSON(http.StatusOK, gin.H{"data": data})
 }
 
 func (n *NodeLogic) getNodeByName(name string) (*v1.Node, error) {

@@ -77,6 +77,7 @@ type NodePodData struct {
 	Age         string `json:"age"`
 	UseGpu      bool   `json:"useGpu"`
 	UseGpuCount int    `json:"useGpuCount"`
+	GpuProduct  string `json:"gpuProduct"`
 }
 
 func NewNodeLogic(log logr.Logger, dynamicClient dynamic.Interface, nodeInformer, podInformer cache.SharedIndexInformer) *NodeLogic {
@@ -367,6 +368,8 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"msg": "request parameter error"})
 		return
 	}
+
+	onlyGpu := ctx.Query("onlyGpu")
 	node, err := n.getNodeByName(name)
 	if err != nil {
 		if errors.Is(err, nodeNotFoundErr) {
@@ -385,10 +388,34 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 	var data []*NodePodData
 	for _, obj := range objs {
 		pod := obj.(*v1.Pod)
+
+		var useGpu bool
+		var useGpuCount int
+		var gpuProduct string
+		for _, container := range pod.Spec.Containers {
+			if _, ok := container.Resources.Requests["nvidia.com/gpu"]; ok {
+				useGpu = true
+				req := container.Resources.Requests["nvidia.com/gpu"]
+				useGpuCount += int(req.Value())
+				for key := range node.GetLabels() {
+					if strings.HasPrefix(key, "osgalaxy.io-gpu-nvidia.com") {
+						gpuProduct = strings.Split(key, "/")[1]
+					}
+				}
+			}
+		}
+
+		if !useGpu && onlyGpu == "true" {
+			continue
+		}
+
 		row := &NodePodData{
-			Name:      pod.Name,
-			Namespace: pod.Namespace,
-			Age:       calculateAge(pod.CreationTimestamp.Time),
+			Name:        pod.Name,
+			Namespace:   pod.Namespace,
+			Age:         calculateAge(pod.CreationTimestamp.Time),
+			UseGpu:      useGpu,
+			UseGpuCount: useGpuCount,
+			GpuProduct:  gpuProduct,
 		}
 
 		for _, condition := range pod.Status.Conditions {
@@ -401,13 +428,6 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 				break
 			}
 
-		}
-		for _, container := range pod.Spec.Containers {
-			if _, ok := container.Resources.Requests["nvidia.com/gpu"]; ok {
-				row.UseGpu = true
-				req := container.Resources.Requests["nvidia.com/gpu"]
-				row.UseGpuCount += int(req.Value())
-			}
 		}
 
 		data = append(data, row)

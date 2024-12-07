@@ -32,6 +32,10 @@ func (s *ApiServer) Engine() *gin.Engine {
 	engine.POST("/nodeLabels/:node", node.NodeLabelPatch)
 	engine.GET("/nodeResource/:node", node.NodeResource)
 	engine.GET("/nodePodList/:node", node.NodePodList)
+
+	pod := NewPodLogic(s.Log, s.DynamicClient, s.nodeInformer, s.podInformer)
+	engine.GET("/podResourceInfo/:ns/:name", pod.PodResourceInfo)
+	engine.GET("/podLabels/:ns/:name", pod.PodLabels)
 	return engine
 }
 

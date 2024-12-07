@@ -1,6 +1,16 @@
 package comm
 
-import "k8s.io/apimachinery/pkg/runtime/schema"
+import (
+	"errors"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
+)
+
+// error
+var (
+	NodeNotFoundErr = errors.New("node not found")
+	PodNotFoundErr  = errors.New("pod not found")
+)
 
 const (
 	NodeLabelRole       = "kubernetes.io/role"

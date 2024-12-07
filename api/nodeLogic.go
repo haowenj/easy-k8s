@@ -19,8 +19,6 @@ import (
 	"easy-k8s/pkg/comm"
 )
 
-var nodeNotFoundErr = errors.New("node not found")
-
 type NodeLogic struct {
 	Log           logr.Logger
 	DynamicClient dynamic.Interface
@@ -73,6 +71,7 @@ type NodeLabelPatchReq struct {
 type NodePodData struct {
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace"`
+	Ip          string `json:"ip"`
 	Status      string `json:"status"`
 	Age         string `json:"age"`
 	UseGpu      bool   `json:"useGpu"`
@@ -82,7 +81,7 @@ type NodePodData struct {
 
 func NewNodeLogic(log logr.Logger, dynamicClient dynamic.Interface, nodeInformer, podInformer cache.SharedIndexInformer) *NodeLogic {
 	return &NodeLogic{
-		Log:           log,
+		Log:           log.WithName("NodeLogic"),
 		DynamicClient: dynamicClient,
 		NodeInformer:  nodeInformer,
 		PodInformer:   podInformer,
@@ -214,7 +213,7 @@ func (n *NodeLogic) NodeLabels(ctx *gin.Context) {
 
 	node, err := n.getNodeByName(name)
 	if err != nil {
-		if errors.Is(err, nodeNotFoundErr) {
+		if errors.Is(err, comm.NodeNotFoundErr) {
 			ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
 			return
 		}
@@ -253,7 +252,7 @@ func (n *NodeLogic) NodeLabelPatch(ctx *gin.Context) {
 
 	node, err := n.getNodeByName(name)
 	if err != nil {
-		if errors.Is(err, nodeNotFoundErr) {
+		if errors.Is(err, comm.NodeNotFoundErr) {
 			n.Log.Error(err, "get node err")
 			ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
 			return
@@ -299,7 +298,7 @@ func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 	}
 	node, err := n.getNodeByName(name)
 	if err != nil {
-		if errors.Is(err, nodeNotFoundErr) {
+		if errors.Is(err, comm.NodeNotFoundErr) {
 			ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
 			return
 		}
@@ -372,7 +371,7 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 	onlyGpu := ctx.Query("onlyGpu")
 	node, err := n.getNodeByName(name)
 	if err != nil {
-		if errors.Is(err, nodeNotFoundErr) {
+		if errors.Is(err, comm.NodeNotFoundErr) {
 			ctx.JSON(http.StatusNotFound, gin.H{"msg": "node not found"})
 			return
 		}
@@ -412,6 +411,7 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 		row := &NodePodData{
 			Name:        pod.Name,
 			Namespace:   pod.Namespace,
+			Ip:          pod.Status.PodIP,
 			Age:         calculateAge(pod.CreationTimestamp.Time),
 			UseGpu:      useGpu,
 			UseGpuCount: useGpuCount,
@@ -436,14 +436,17 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 }
 
 func (n *NodeLogic) getNodeByName(name string) (*v1.Node, error) {
-	obj, err := n.NodeInformer.GetIndexer().ByIndex("nodeNameIdx", name)
+	obj, exists, err := n.NodeInformer.GetStore().GetByKey(name)
 	if err != nil {
+		n.Log.Error(err, "getNode error")
 		return nil, err
 	}
-	if len(obj) == 0 {
-		return nil, nodeNotFoundErr
+	if !exists {
+		n.Log.Error(comm.NodeNotFoundErr, "getNode error")
+		return nil, comm.NodeNotFoundErr
 	}
-	return obj[0].(*v1.Node), nil
+
+	return obj.(*v1.Node), nil
 }
 
 func calculateAge(creationTime time.Time) string {

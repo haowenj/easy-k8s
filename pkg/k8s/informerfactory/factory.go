@@ -73,15 +73,7 @@ func (f *InformerFactory) WaitForCacheSync(stopCh <-chan struct{}) {
 func (f *InformerFactory) Node() cache.SharedIndexInformer {
 	return f.getInformer("nodeInformer", func() cache.SharedIndexInformer {
 		lw := f.newListWatchFromClient(f.clientSet.CoreV1().RESTClient(), "nodes", k8sv1.NamespaceAll, fields.Everything(), labels.Everything())
-		return cache.NewSharedIndexInformer(lw, &k8sv1.Node{}, f.defaultResync, cache.Indexers{
-			"nodeNameIdx": func(obj any) ([]string, error) {
-				node, ok := obj.(*k8sv1.Node)
-				if !ok {
-					return nil, fmt.Errorf("unexpected type %T", obj)
-				}
-				return []string{node.Name}, nil
-			},
-		})
+		return cache.NewSharedIndexInformer(lw, &k8sv1.Node{}, f.defaultResync, cache.Indexers{})
 	})
 }
 

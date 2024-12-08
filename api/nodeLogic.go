@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-logr/logr"
@@ -66,17 +65,6 @@ type NodeLabelPatchReq struct {
 		Key    string `json:"key"`
 		Value  string `json:"value"`
 	} `json:"labels"`
-}
-
-type NodePodData struct {
-	Name        string `json:"name"`
-	Namespace   string `json:"namespace"`
-	Ip          string `json:"ip"`
-	Status      string `json:"status"`
-	Age         string `json:"age"`
-	UseGpu      bool   `json:"useGpu"`
-	UseGpuCount int    `json:"useGpuCount"`
-	GpuProduct  string `json:"gpuProduct"`
 }
 
 func NewNodeLogic(log logr.Logger, dynamicClient dynamic.Interface, nodeInformer, podInformer cache.SharedIndexInformer) *NodeLogic {
@@ -336,8 +324,8 @@ func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 	for _, obj := range objs {
 		pod := obj.(*v1.Pod)
 		for _, container := range pod.Spec.Containers {
-			if _, ok := container.Resources.Requests["nvidia.com/gpu"]; ok {
-				req := container.Resources.Requests["nvidia.com/gpu"]
+			if _, ok := container.Resources.Requests[comm.LabelNVIDIA]; ok {
+				req := container.Resources.Requests[comm.LabelNVIDIA]
 				gpu += req.Value()
 			}
 			if _, ok := container.Resources.Requests["cpu"]; ok {
@@ -384,7 +372,7 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
 		return
 	}
-	var data []*NodePodData
+	var data []*PodData
 	for _, obj := range objs {
 		pod := obj.(*v1.Pod)
 
@@ -392,9 +380,9 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 		var useGpuCount int
 		var gpuProduct string
 		for _, container := range pod.Spec.Containers {
-			if _, ok := container.Resources.Requests["nvidia.com/gpu"]; ok {
+			if _, ok := container.Resources.Requests[comm.LabelNVIDIA]; ok {
 				useGpu = true
-				req := container.Resources.Requests["nvidia.com/gpu"]
+				req := container.Resources.Requests[comm.LabelNVIDIA]
 				useGpuCount += int(req.Value())
 				for key := range node.GetLabels() {
 					if strings.HasPrefix(key, "osgalaxy.io-gpu-nvidia.com") {
@@ -408,10 +396,11 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 			continue
 		}
 
-		row := &NodePodData{
+		row := &PodData{
 			Name:        pod.Name,
 			Namespace:   pod.Namespace,
 			Ip:          pod.Status.PodIP,
+			NodeName:    pod.Spec.NodeName,
 			Age:         calculateAge(pod.CreationTimestamp.Time),
 			UseGpu:      useGpu,
 			UseGpuCount: useGpuCount,
@@ -447,27 +436,4 @@ func (n *NodeLogic) getNodeByName(name string) (*v1.Node, error) {
 	}
 
 	return obj.(*v1.Node), nil
-}
-
-func calculateAge(creationTime time.Time) string {
-	now := time.Now()
-	duration := now.Sub(creationTime)
-
-	days := int(duration.Hours() / 24)
-	hours := int(duration.Hours()) % 24
-	minutes := int(duration.Minutes()) % 60
-	seconds := int(duration.Seconds()) % 60
-
-	if days > 0 {
-		if days > 5 {
-			return fmt.Sprintf("%dd", days)
-		}
-		return fmt.Sprintf("%dd%dh", days, hours)
-	} else if hours > 0 {
-		return fmt.Sprintf("%dh%dm", hours, minutes)
-	} else if minutes > 0 {
-		return fmt.Sprintf("%dm%ds", minutes, seconds)
-	} else {
-		return fmt.Sprintf("%d秒", seconds)
-	}
 }

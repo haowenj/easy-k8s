@@ -12,10 +12,12 @@ var (
 	PodNotFoundErr  = errors.New("pod not found")
 )
 
+// k8s resource label
 const (
 	NodeLabelRole       = "kubernetes.io/role"
 	LabelNodeRolePrefix = "node-role.kubernetes.io/"
 	LabelCustomPrefix   = "osgalaxy.io"
+	LabelNVIDIA         = "nvidia.com/gpu"
 )
 
 var DecodeLables = map[string]struct{}{

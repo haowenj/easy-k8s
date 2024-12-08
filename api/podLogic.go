@@ -1,15 +1,16 @@
 package api
 
 import (
-	"easy-k8s/pkg/comm"
 	"fmt"
-	"net/http"
-
 	"github.com/gin-gonic/gin"
 	"github.com/go-logr/logr"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/cache"
+	"net/http"
+	"strings"
+
+	"easy-k8s/pkg/comm"
 )
 
 type PodLogic struct {
@@ -37,6 +38,72 @@ func NewPodLogic(log logr.Logger, dynamicClient dynamic.Interface, nodeInformer,
 		NodeInformer:  nodeInformer,
 		PodInformer:   podInformer,
 	}
+}
+
+func (p *PodLogic) PodListByNs(ctx *gin.Context) {
+	ns := ctx.Param("ns")
+	if ns == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"msg": "namespace is empty"})
+		return
+	}
+
+	objs, err := p.PodInformer.GetIndexer().ByIndex(cache.NamespaceIndex, ns)
+	if err != nil {
+		p.Log.Error(err, "get pod list by namespace")
+		ctx.JSON(http.StatusBadRequest, gin.H{"msg": err.Error()})
+		return
+	}
+
+	var data []*PodData
+	for _, obj := range objs {
+		pod := obj.(*v1.Pod)
+
+		var useGpu bool
+		var useGpuCount int
+		var gpuProduct string
+		for _, container := range pod.Spec.Containers {
+			if _, ok := container.Resources.Requests[comm.LabelNVIDIA]; ok {
+				useGpu = true
+				req := container.Resources.Requests[comm.LabelNVIDIA]
+				useGpuCount += int(req.Value())
+
+				node, _, err := p.NodeInformer.GetStore().GetByKey(pod.Spec.NodeName)
+				if err != nil {
+					p.Log.Error(err, "get node by key")
+					continue
+				}
+				n := node.(*v1.Node)
+				for key := range n.GetLabels() {
+					if strings.HasPrefix(key, "osgalaxy.io-gpu-nvidia.com") {
+						gpuProduct = strings.Split(key, "/")[1]
+					}
+				}
+			}
+		}
+		row := &PodData{
+			Name:        pod.Name,
+			Namespace:   pod.Namespace,
+			Ip:          pod.Status.PodIP,
+			NodeName:    pod.Spec.NodeName,
+			Age:         calculateAge(pod.CreationTimestamp.Time),
+			UseGpu:      useGpu,
+			UseGpuCount: useGpuCount,
+			GpuProduct:  gpuProduct,
+		}
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == v1.PodReady {
+				if condition.Status == v1.ConditionTrue {
+					row.Status = "Ready"
+				} else {
+					row.Status = "NotReady"
+				}
+				break
+			}
+
+		}
+		data = append(data, row)
+	}
+	ctx.JSON(http.StatusOK, gin.H{"data": data})
 }
 
 func (p *PodLogic) PodResourceInfo(ctx *gin.Context) {

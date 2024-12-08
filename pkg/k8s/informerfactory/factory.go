@@ -88,6 +88,7 @@ func (f *InformerFactory) Pod() cache.SharedIndexInformer {
 				}
 				return []string{pod.Spec.NodeName}, nil
 			},
+			cache.NamespaceIndex: cache.MetaNamespaceIndexFunc,
 		})
 	})
 }

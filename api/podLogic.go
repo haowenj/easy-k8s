@@ -102,10 +102,6 @@ func (p *PodLogic) PodListByNs(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"data": data})
 }
 
-func (p *PodLogic) PodRelatedResource(ctx *gin.Context) {
-
-}
-
 func (p *PodLogic) getPod(key string) (*v1.Pod, error) {
 	obj, exists, err := p.PodInformer.GetStore().GetByKey(key)
 	if err != nil {

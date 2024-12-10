@@ -24,7 +24,7 @@ func podRequests(pod *corev1.Pod) corev1.ResourceList {
 			if pod.Status.Resize == corev1.PodResizeStatusInfeasible {
 				containerReqs = cs.Resources.Requests.DeepCopy()
 			} else {
-				containerReqs = max(container.Resources.Requests, cs.Resources.Requests)
+				containerReqs = getMax(container.Resources.Requests, cs.Resources.Requests)
 			}
 		}
 		addResourceList(reqs, containerReqs)
@@ -108,9 +108,7 @@ func podLimits(pod *corev1.Pod) corev1.ResourceList {
 	return limits
 }
 
-// max returns the result of max(a, b) for each named resource and is only used if we can't
-// accumulate into an existing resource list
-func max(a corev1.ResourceList, b corev1.ResourceList) corev1.ResourceList {
+func getMax(a corev1.ResourceList, b corev1.ResourceList) corev1.ResourceList {
 	result := corev1.ResourceList{}
 	for key, value := range a {
 		if other, found := b[key]; found {

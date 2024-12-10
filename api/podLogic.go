@@ -1,10 +1,10 @@
 package api
 
 import (
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/go-logr/logr"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/cache"
 	"net/http"
@@ -59,14 +59,11 @@ func (p *PodLogic) PodListByNs(ctx *gin.Context) {
 		pod := obj.(*v1.Pod)
 
 		var useGpu bool
-		var useGpuCount int
-		var gpuProduct string
+		var useGpuCount, gpuProduct string
+		var gpuQuantity *resource.Quantity
 		for _, container := range pod.Spec.Containers {
 			if _, ok := container.Resources.Requests[comm.LabelNVIDIA]; ok {
 				useGpu = true
-				req := container.Resources.Requests[comm.LabelNVIDIA]
-				useGpuCount += int(req.Value())
-
 				node, _, err := p.NodeInformer.GetStore().GetByKey(pod.Spec.NodeName)
 				if err != nil {
 					p.Log.Error(err, "get node by key")
@@ -78,79 +75,35 @@ func (p *PodLogic) PodListByNs(ctx *gin.Context) {
 						gpuProduct = strings.Split(key, "/")[1]
 					}
 				}
+				nvAllocate := n.Status.Allocatable[comm.LabelNVIDIA]
+				if gpuQuantity == nil {
+					gpuQuantity = &nvAllocate
+				} else {
+					gpuQuantity.Add(nvAllocate)
+				}
 			}
+		}
+		if gpuQuantity != nil {
+			useGpuCount = gpuQuantity.String()
 		}
 		row := &PodData{
 			Name:        pod.Name,
 			Namespace:   pod.Namespace,
 			Ip:          pod.Status.PodIP,
 			NodeName:    pod.Spec.NodeName,
-			Age:         calculateAge(pod.CreationTimestamp.Time),
+			Age:         translateTimestampSince(pod.CreationTimestamp),
 			UseGpu:      useGpu,
 			UseGpuCount: useGpuCount,
 			GpuProduct:  gpuProduct,
-		}
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == v1.PodReady {
-				if condition.Status == v1.ConditionTrue {
-					row.Status = "Ready"
-				} else {
-					row.Status = "NotReady"
-				}
-				break
-			}
-
+			Status:      string(pod.Status.Phase),
 		}
 		data = append(data, row)
 	}
 	ctx.JSON(http.StatusOK, gin.H{"data": data})
 }
 
-func (p *PodLogic) PodResourceInfo(ctx *gin.Context) {
-	namespace := ctx.Param("ns")
-	name := ctx.Param("name")
-	if namespace == "" || name == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"msg": "namespace or name is null"})
-		return
-	}
+func (p *PodLogic) PodRelatedResource(ctx *gin.Context) {
 
-	pod, err := p.getPod(fmt.Sprintf("%s/%s", namespace, name))
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
-		return
-	}
-
-	res := &PodResource{Name: pod.Name, Containers: make([]*Container, 0)}
-	for _, container := range pod.Spec.Containers {
-		containerRes := &Container{Name: container.Name, Request: make(map[string]string), Limits: make(map[string]string)}
-		for key, val := range container.Resources.Requests {
-			containerRes.Request[key.String()] = val.String()
-		}
-		for key, val := range container.Resources.Limits {
-			containerRes.Limits[key.String()] = val.String()
-		}
-		res.Containers = append(res.Containers, containerRes)
-	}
-	ctx.JSON(http.StatusOK, gin.H{"data": res})
-}
-
-func (p *PodLogic) PodLabels(ctx *gin.Context) {
-	namespace := ctx.Param("ns")
-	name := ctx.Param("name")
-	if namespace == "" || name == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"msg": "namespace or name is null"})
-		return
-	}
-	pod, err := p.getPod(fmt.Sprintf("%s/%s", namespace, name))
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error()})
-		return
-	}
-	res := []string{}
-	for key, val := range pod.GetLabels() {
-		res = append(res, fmt.Sprintf("%s=%s", key, val))
-	}
-	ctx.JSON(http.StatusOK, gin.H{"data": res})
 }
 
 func (p *PodLogic) getPod(key string) (*v1.Pod, error) {

@@ -10,12 +10,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-logr/logr"
 	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/cache"
 
 	"easy-k8s/pkg/comm"
+	eresource "easy-k8s/pkg/k8s/resource"
 )
 
 type NodeLogic struct {
@@ -134,7 +136,7 @@ func (n *NodeLogic) GetNodeList(ctx *gin.Context) {
 		data := &NodeListData{}
 		data.Name = node.Name
 		if _, ok := displayFileds["age"]; ok {
-			data.Age = calculateAge(node.CreationTimestamp.Time)
+			data.Age = translateTimestampSince(node.CreationTimestamp)
 		}
 		if _, ok := displayFileds["gpuProduct"]; ok {
 			data.GpuProduct = gpuProduct
@@ -296,23 +298,19 @@ func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 
 	total := make(map[string]string)
 	var product string
-	for resourceName, quantity := range node.Status.Allocatable {
-		if resourceName.String() == "cpu" {
-			total["cpu"] = fmt.Sprintf("%dc", quantity.Value())
-		}
-		if resourceName.String() == "memory" {
-			total["memory"] = fmt.Sprintf("%dmi", quantity.Value()/(1024*1024))
-		}
-		if resourceName.String() == "nvidia.com/gpu" {
-			for key := range node.GetLabels() {
-				if strings.HasPrefix(key, "osgalaxy.io-gpu-nvidia.com") {
-					product = strings.Split(key, "/")[1]
-				}
+	cpuAllocatable := node.Status.Allocatable[v1.ResourceCPU]
+	memAllocatable := node.Status.Allocatable[v1.ResourceMemory]
+	total["cpu"] = cpuAllocatable.String()
+	total["memory"] = memAllocatable.String()
+	if _, ok := node.Status.Allocatable[comm.LabelNVIDIA]; ok {
+		for key := range node.GetLabels() {
+			if strings.HasPrefix(key, "osgalaxy.io-gpu-nvidia.com") {
+				product = strings.Split(key, "/")[1]
 			}
-			total[product] = fmt.Sprintf("%d", quantity.Value())
 		}
+		nvAllocate := node.Status.Allocatable[comm.LabelNVIDIA]
+		total[product] = nvAllocate.String()
 	}
-
 	used := make(map[string]string)
 	objs, err := n.PodInformer.GetIndexer().ByIndex("nodeNameIdx", node.GetName())
 	if err != nil {
@@ -320,28 +318,14 @@ func (n *NodeLogic) NodeResource(ctx *gin.Context) {
 		return
 	}
 
-	var cpu, mem, gpu int64
-	for _, obj := range objs {
-		pod := obj.(*v1.Pod)
-		for _, container := range pod.Spec.Containers {
-			if _, ok := container.Resources.Requests[comm.LabelNVIDIA]; ok {
-				req := container.Resources.Requests[comm.LabelNVIDIA]
-				gpu += req.Value()
-			}
-			if _, ok := container.Resources.Requests["cpu"]; ok {
-				req := container.Resources.Requests["cpu"]
-				cpu += req.MilliValue()
-			}
-			if _, ok := container.Resources.Requests["memory"]; ok {
-				req := container.Resources.Requests["memory"]
-				mem += req.Value()
-			}
-		}
-	}
-	used["cpu"] = fmt.Sprintf("%dm", cpu)
-	used["memory"] = fmt.Sprintf("%dmi", mem/(1024*1024))
-	if gpu > 0 {
-		used[product] = fmt.Sprintf("%d", gpu)
+	reqs, _ := n.getPodsTotalRequestsAndLimits(objs)
+	cpuReq := reqs[v1.ResourceCPU]
+	memReq := reqs[v1.ResourceMemory]
+	used["cpu"] = cpuReq.String()
+	used["memory"] = memReq.String()
+	if _, ok := reqs[comm.LabelNVIDIA]; ok {
+		nvReq := reqs[comm.LabelNVIDIA]
+		used[product] = nvReq.String()
 	}
 	ctx.JSON(http.StatusOK, gin.H{"data": map[string]map[string]string{
 		"total": total,
@@ -377,19 +361,26 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 		pod := obj.(*v1.Pod)
 
 		var useGpu bool
-		var useGpuCount int
-		var gpuProduct string
+		var useGpuCount, gpuProduct string
+		var gpuQuantity *resource.Quantity
 		for _, container := range pod.Spec.Containers {
 			if _, ok := container.Resources.Requests[comm.LabelNVIDIA]; ok {
 				useGpu = true
-				req := container.Resources.Requests[comm.LabelNVIDIA]
-				useGpuCount += int(req.Value())
 				for key := range node.GetLabels() {
 					if strings.HasPrefix(key, "osgalaxy.io-gpu-nvidia.com") {
 						gpuProduct = strings.Split(key, "/")[1]
 					}
 				}
+				nvAllocate := node.Status.Allocatable[comm.LabelNVIDIA]
+				if gpuQuantity == nil {
+					gpuQuantity = &nvAllocate
+				} else {
+					gpuQuantity.Add(nvAllocate)
+				}
 			}
+		}
+		if gpuQuantity != nil {
+			useGpuCount = gpuQuantity.String()
 		}
 
 		if !useGpu && onlyGpu == "true" {
@@ -401,24 +392,12 @@ func (n *NodeLogic) NodePodList(ctx *gin.Context) {
 			Namespace:   pod.Namespace,
 			Ip:          pod.Status.PodIP,
 			NodeName:    pod.Spec.NodeName,
-			Age:         calculateAge(pod.CreationTimestamp.Time),
+			Age:         translateTimestampSince(pod.CreationTimestamp),
 			UseGpu:      useGpu,
 			UseGpuCount: useGpuCount,
 			GpuProduct:  gpuProduct,
+			Status:      string(pod.Status.Phase),
 		}
-
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == v1.PodReady {
-				if condition.Status == v1.ConditionTrue {
-					row.Status = "Ready"
-				} else {
-					row.Status = "NotReady"
-				}
-				break
-			}
-
-		}
-
 		data = append(data, row)
 	}
 	ctx.JSON(http.StatusOK, gin.H{"data": data})
@@ -436,4 +415,32 @@ func (n *NodeLogic) getNodeByName(name string) (*v1.Node, error) {
 	}
 
 	return obj.(*v1.Node), nil
+}
+
+func (n *NodeLogic) getPodsTotalRequestsAndLimits(podList []any) (reqs map[v1.ResourceName]resource.Quantity, limits map[v1.ResourceName]resource.Quantity) {
+	reqs, limits = map[v1.ResourceName]resource.Quantity{}, map[v1.ResourceName]resource.Quantity{}
+	for _, obj := range podList {
+		pod := obj.(*v1.Pod)
+		if pod.Status.Phase != v1.PodRunning {
+			continue
+		}
+		podReqs, podLimits := eresource.PodRequestsAndLimits(pod)
+		for podReqName, podReqValue := range podReqs {
+			if value, ok := reqs[podReqName]; !ok {
+				reqs[podReqName] = podReqValue.DeepCopy()
+			} else {
+				value.Add(podReqValue)
+				reqs[podReqName] = value
+			}
+		}
+		for podLimitName, podLimitValue := range podLimits {
+			if value, ok := limits[podLimitName]; !ok {
+				limits[podLimitName] = podLimitValue.DeepCopy()
+			} else {
+				value.Add(podLimitValue)
+				limits[podLimitName] = value
+			}
+		}
+	}
+	return
 }

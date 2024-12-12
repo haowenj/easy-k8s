@@ -20,6 +20,14 @@ const (
 	LabelNVIDIA         = "nvidia.com/gpu"
 )
 
+// volume type
+const (
+	VolumeConfigMap             = "configMap"
+	VolumeSecret                = "secret"
+	VolumeHostPath              = "hostPath"
+	VolumePersistentVolumeClaim = "persistentVolumeClaim"
+)
+
 var DecodeLables = map[string]struct{}{
 	"osgalaxy.io/city":     {},
 	"osgalaxy.io/country":  {},

@@ -35,6 +35,7 @@ func (s *ApiServer) Engine() *gin.Engine {
 
 	pod := NewPodLogic(s.Log, s.DynamicClient, s.nodeInformer, s.podInformer)
 	engine.GET("/podListByNs/:ns", pod.PodListByNs)
+	engine.GET("/podAssociatedResources/:ns/:name", pod.PodAssociatedResources)
 	return engine
 }
 

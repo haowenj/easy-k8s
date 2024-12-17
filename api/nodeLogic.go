@@ -264,6 +264,8 @@ func (n *NodeLogic) NodeLabelPatch(ctx *gin.Context) {
 	}
 
 	patchData := []comm.PatchOperation{{Op: "replace", Path: "/metadata/labels", Value: labels}}
+	//这里有另一种写法，路径中的~1是对字符/的编码，因为在JSON Pointer中，/是一个特殊字符，用于分隔路径的各个部分。因此，osgalaxy.io/supplier-status在JSON Patch的路径中被编码为osgalaxy.io~1supplier-status
+	//patchData := `[{"op": "remove", "path": "/metadata/labels/osgalaxy.io~1supplier-status"}, {"op": "remove", "path": "/metadata/labels/osgalaxy.io~1sale-type"}]`
 
 	playLoadBytes, err := json.Marshal(patchData)
 	if err != nil {

@@ -5,6 +5,7 @@ go 1.22.5
 require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-logr/logr v1.4.2
+	github.com/sashabaranov/go-openai v1.36.1
 	k8s.io/api v0.31.3
 	k8s.io/apimachinery v0.31.3
 	k8s.io/client-go v0.31.3

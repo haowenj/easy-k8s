@@ -3,6 +3,7 @@ module easy-k8s
 go 1.22.5
 
 require (
+	github.com/agiledragon/gomonkey/v2 v2.12.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-logr/logr v1.4.2
 	github.com/sashabaranov/go-openai v1.36.1

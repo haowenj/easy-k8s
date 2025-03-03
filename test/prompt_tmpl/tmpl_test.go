@@ -67,6 +67,7 @@ func TestPrompt(t *testing.T) {
 
 	prompt := fmt.Sprintf(Template, toolsL, tool_names, query)
 
+	ai.MessageStore.Clear("你是一位数学老师，你的学生问你一个问题，你需要回答他。")
 	ai.MessageStore.AddForUser(prompt)
 	i := 1
 	for {

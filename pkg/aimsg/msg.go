@@ -20,7 +20,6 @@ var MessageStore ChatMessages
 
 func init() {
 	MessageStore = make(ChatMessages, 0)
-	MessageStore.Clear("你是一位数学老师") //清理和初始化
 
 }
 

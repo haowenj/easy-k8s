@@ -23,7 +23,7 @@ var calculate = openai.Tool{
 
 func TestAgent(t *testing.T) {
 	cm := &MessageStore
-	cm.AddFor("user", "用88加上97加上108加上45最后再减去38等于多少？")
+	cm.AddFor("user", "请用毛主席的语气鼓励我一下，眼下的苦难都是暂时的，我们要坚持下去，要对未来充满信心。")
 	rsp := ToolChat(cm.ToMessage(), []openai.Tool{calculate})
 	//说明调用了工具
 	if len(rsp.ToolCalls) > 0 {
@@ -43,6 +43,8 @@ func TestAgent(t *testing.T) {
 		cm.AddForTool("tool", fmt.Sprintf("%d", sum), rsp.ToolCalls[0].Function.Name, rsp.ToolCalls[0].ID)
 		response := ToolChat(cm.ToMessage(), []openai.Tool{calculate})
 		fmt.Println(response.Content)
+	} else {
+		fmt.Println(rsp.Content)
 	}
 }
 
@@ -89,7 +91,7 @@ func NewOpenAiClient() *openai.Client {
 func ToolChat(message []openai.ChatCompletionMessage, tools []openai.Tool) openai.ChatCompletionMessage {
 	c := NewOpenAiClient()
 	rsp, err := c.CreateChatCompletion(context.Background(), openai.ChatCompletionRequest{
-		Model:      "qwen-turbo",
+		Model:      "qwen-max",
 		Messages:   message,
 		Tools:      tools,
 		ToolChoice: "auto",
